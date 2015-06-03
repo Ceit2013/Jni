@@ -1,0 +1,212 @@
+
+apply plugin: 'maven'
+apply plugin: 'com.android.application'
+dependencies {
+    compile fileTree(dir: 'libs', include: ['*.jar'])
+    compile 'com.android.support:appcompat-v7:22.1.1'
+}
+android {
+    compileSdkVersion 22
+    buildToolsVersion "22.0.1"
+
+    defaultConfig {
+        applicationId "com.example.administrator.jnitest"
+        minSdkVersion 8
+        targetSdkVersion 22
+        versionCode 1
+        versionName "1.0"
+        ndk{
+            moduleName "hello-jni"
+        }
+
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    /*productFlavors {
+        x86 {
+            ndk {
+                abiFilter "x86"
+            }
+        }
+        armv7 {
+            ndk {
+                abiFilter "armeabi-v7a"
+            }
+        }
+        arm {
+            ndk {
+                abiFilter "armeabi"
+            }
+        }
+    }
+*/}
+
+/*编译ndk*/
+ext {
+    default_ndk_package_name = "com.example.administrator.jnitest.ndk.NDKTest.class"
+}
+task help << {
+    println property2
+    println "Usage:"
+    println "gradle [-Pmn]"
+    println "  -Pmn    use javah Generate c.h"
+    println "you can input gradle -Pmn assembleDebug or -Pmn=packageName assembleDebug"
+}
+defaultTasks 'help'
+android.applicationVariants.all{variant ->
+    variant.javaCompile << {
+        makeC_Head()
+    }
+}
+def makeC_Head() {
+    /*如果包含参数mn*/
+    if (project.hasProperty("mn"))
+    {
+
+        def package_name = getGenerateCJavaClass()
+        if (null!=mn&&!"".equals(mn.trim()))
+            package_name = mn
+
+        println "#####################generate c start######################"
+        def parent = project.buildDir.getAbsolutePath()
+        def debug_parent = new File(parent,"intermediates/classes/debug")
+        def package_file = new String(package_name)
+        def file_list = []
+        //是class文件否则是文件夹
+        //如果是文件夹就遍历所有class文件进行生成
+        def index
+        if ((index=package_file.indexOf(".class"))>-1)
+        {
+              file_list.add(package_file.substring(0,index))
+        }
+        else
+        {
+            //获取文件夹
+            package_file = package_file.replace(".",File.separator);
+            def class_dir = new File(debug_parent,package_file)
+            file_list.addAll(getAllClass(class_dir,debug_parent.getAbsolutePath(),package_file))
+
+        }
+        println "file size:"+file_list.size() +"--" +file_list.toString()
+        def cmd_file = new File(project.buildDir.getAbsolutePath(),"generate_c.bat");
+        if (cmd_file.exists())
+        {
+            cmd_file.delete()
+        }
+        cmd_file.createNewFile()
+        def dir_project = project.projectDir
+        def c_dir = new File(dir_project,"c_head")
+
+        if (!c_dir.exists())c_dir.mkdirs()
+
+        def cmds = new StringBuffer();
+        cmds.append("cd "+c_dir.getAbsolutePath()+" \n")
+        file_list.each {class_name->
+            def cmd  ="javah -classpath "+debug_parent.getAbsolutePath()+" -jni "+ class_name
+            cmds.append(cmd+" \n")
+        }
+        def fos = new BufferedWriter(new FileWriter(cmd_file));
+        fos.write(cmds.toString())
+        fos.close()
+
+        println "project: " +dir_project.getAbsolutePath()
+        exec{
+            commandLine cmd_file.getAbsolutePath()
+        }
+        println "#####################generate c end######################"
+
+    }
+
+}
+//获取文件夹下的所有class文件
+def getAllClass(dir,replace_str,package_file){
+    def file_dir = new File(dir,"")
+    def files = []
+    if (file_dir.isFile())
+    {
+        def index_class = file.getAbsolutePath().indexOf(".class")
+        def class_name = file.getAbsolutePath().substring(index,index_class)
+        class_name = class_name.replace(File.separator,".")
+        files.add(class_name)
+    }
+    else
+    {
+        def other_files = file_dir.listFiles()
+        other_files.each {file->
+            if (file.isFile())
+            {
+                def index = file.getAbsolutePath().indexOf(package_file)
+                def index_class = file.getAbsolutePath().indexOf(".class")
+                def class_name = file.getAbsolutePath().substring(index,index_class)
+                class_name = class_name.replace(File.separator,".")
+                files.add(class_name)
+            }else
+            {
+                files.addAll(getAllClass(file,replace_str,package_file))
+            }
+        }
+    }
+    return  files
+}
+def getGenerateCJavaClass(){
+    return default_ndk_package_name
+}
+/*获取操作系统命令*/
+def getNdkBuildName() {
+    if (Os.isFamily(Os.FAMILY_WINDOWS)) {
+        return "ndk-build.cmd"
+    } else {
+        return "ndk-build"
+    }
+}
+def makeNdkTasks(String name) {
+    task "ndk_build_$name"(type: Exec) {
+        inputs.file("src/main/jni/$name")
+        outputs.dir("$buildDir/$name")
+        commandLine getNdkBuildFullPath(),
+                'NDK_PROJECT_PATH=null',
+                'NDK_APPLICATION_MK=../Application.mk',
+                'NDK_OUT=' + temporaryDir,
+                "NDK_LIBS_OUT=$buildDir/$name",
+                '-C', file("src/main/jni/$name").absolutePath,
+                '--jobs', '8'
+    }
+
+    task "ndk_clean_$name"(type: Exec) {
+        ignoreExitValue true
+        commandLine getNdkBuildFullPath(),
+                'NDK_PROJECT_PATH=null',
+                'NDK_APPLICATION_MK=../Application.mk',
+                'NDK_OUT=' + temporaryDir,
+                "NDK_LIBS_OUT=$buildDir/$name",
+                '-C', file("src/main/jni/$name").absolutePath,
+                'clean'
+    }
+
+    tasks.withType(JavaCompile) {
+        compileTask -> compileTask.dependsOn "ndk_build_$name"
+    }
+    clean.dependsOn "ndk_clean_$name"
+}
+
+/*活动自定义ndkpath命令*/
+def getNdkBuildFullPath() {
+    // we allow to provide full path to ndk-build tool
+    if (hasProperty('ndk.command')) {
+        return property('ndk.command')
+    }
+    // or just a path to the containing directiry
+    if (hasProperty('ndk.path')) {
+        def path = property('ndk.path')
+        if (!path.endsWith(File.separator)) {
+            path += File.separator
+        }
+        return path + getNdkBuildName()
+    }
+    // if none of above is provided, we assume ndk-build is already in $PATH
+    return getNdkBuildName()
+}
